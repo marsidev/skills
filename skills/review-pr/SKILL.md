@@ -4,7 +4,7 @@ description: "Review a GitHub pull request like a senior engineer — analyze th
 license: MIT
 metadata:
   author: marsidev
-  version: "2026.04.03"
+  version: "2026.06.02"
 ---
 
 # PR Code Review
@@ -40,13 +40,65 @@ gh pr diff {number}
 Save `headRefOid` (the head commit SHA) — you'll use it to build file URLs in the review body:
 `https://github.com/{owner}/{repo}/blob/{headRefOid}/{file_path}`
 
-For each changed file in the diff, read the full file (not just the diff hunks) to understand the broader context — a change that looks fine in isolation may be wrong when you see the surrounding code. Use the Read tool for this. Focus on files with substantive changes; skip trivial renames or lockfile updates.
+Reading full files (not just the diff hunks) is essential — a change that looks fine in isolation may be wrong when you see the surrounding code. That reading happens during analysis (Step 3): inline for small PRs, or delegated to parallel per-file agents for larger ones. Either way, focus on files with substantive changes; skip trivial renames or lockfile updates.
 
-**Project conventions**: If this is a fresh session without much codebase context, read the project's `CLAUDE.md` and any relevant `AGENTS.md` files for the areas touched by the PR. These contain the team's conventions (e.g., `satisfies` over `as`, no enums, Result types, Dockerfile rules). Convention violations are real findings. If you already have this context from the current session, skip this step.
+Split the full diff by file now (the `diff --git` sections). You'll hand each file's hunks to the agent that reviews it in Step 3.
 
-### Step 3: Analyze the diff
+**Project conventions**: If this is a fresh session without much codebase context, read the project's `CLAUDE.md` and any relevant `AGENTS.md` files for the areas touched by the PR. These contain the team's conventions (e.g., `satisfies` over `as`, no enums, Result types, Dockerfile rules). Convention violations are real findings. If you already have this context from the current session, skip this step. Keep the relevant conventions handy — when you dispatch review agents in Step 3, you must paste them into each agent's prompt, since agents don't inherit your session context.
 
-Review every changed file for issues. Think carefully about each change — what could go wrong, what conventions does it violate, what edge cases does it miss.
+### Step 3: Analyze the diff with parallel agents
+
+Each changed file is an independent review domain — reviewing one file doesn't depend on the findings from another. Exploit that: dispatch focused agents that review files concurrently. Each agent reads one file's full context and reasons hard about a narrow scope, so the review is both faster (parallel wall-clock) and sharper (less context to juggle per reviewer) than reading every file sequentially yourself.
+
+**Choose a strategy by PR size:**
+
+- **Small PR** (1–2 substantive files, or one tightly-coupled change): review inline yourself. Read each full file with the Read tool, then apply the rubric below directly. Dispatch overhead isn't worth it.
+- **Larger PR** (3+ substantive files, or several independent areas): dispatch parallel review agents — **one agent per file, or per group of tightly-coupled files** (e.g. a module and its test, a function and its only caller — files that must be read together to judge correctness). Don't split a coupled change across agents, and don't lump unrelated files into one agent.
+
+**Dispatching review agents:**
+
+- Send all agent calls **in a single message** so they run concurrently. One agent per independent file/group.
+- Use a **general-purpose** agent (subagent type that can Read and reason over full files — not a read-only excerpt searcher). The agents only read and report; they never edit.
+- Each agent is **self-contained** — it does NOT inherit your session context. Give it everything it needs: the PR title and intent, the file path(s) it owns, that file's diff hunks (from Step 2), the relevant project conventions you gathered, and the full rubric below. A vague prompt produces a vague review.
+
+Use this prompt template per agent:
+
+````markdown
+You are a senior code reviewer. Review the changes to `{file_path}` in this PR and return findings.
+
+**PR:** #{number} — {title}
+**Intent:** {1-2 sentences on what the PR is trying to do}
+
+**Diff for this file:**
+```diff
+{the diff --git hunks for this file only}
+```
+
+**Project conventions that apply** (violations are real findings):
+{paste the relevant rules from CLAUDE.md / AGENTS.md, or "none documented"}
+
+**Your task:**
+1. Read the FULL file at `{file_path}` (not just the hunks) to understand surrounding context. Read tightly-related files if needed to judge correctness.
+2. Review only what this PR changed. Apply the rubric below.
+3. Return your findings in the exact return format below. If you find nothing, return "No findings." plus a one-line note of anything done well.
+
+{paste the full rubric: "What to look for", "What NOT to flag", "Severity tiers", "Category tags", and "Each finding needs" — verbatim from below}
+
+**Return format** — for each finding, a block exactly like this:
+
+---
+**Title:** {short, specific}
+**Severity:** {Blocking | Should-Fix | Nitpick}
+**Category:** {one or more of the category tags}
+**File:** `{file_path}` L{start}-{end}   (line numbers on the NEW/right side of the diff)
+**Problem:** {what's wrong and why it matters}
+**Suggestion:** {concrete fix, with a code snippet if helpful}
+---
+
+End with: `Files read: N` and a one-line `Highlight:` of anything notably well done (or "none").
+````
+
+**The rubric** (this is what you paste into each agent prompt, and what you apply directly for inline review):
 
 **What to look for:**
 
@@ -79,6 +131,18 @@ Each finding needs:
 - The file path and line number(s)
 - A clear explanation of the problem (what's wrong and why it matters)
 - A concrete suggestion (what to do instead, with code if helpful)
+
+**Aggregating agent results:**
+
+When the agents return, you own the synthesis — don't just concatenate their outputs:
+
+1. **Collect** every finding from every agent.
+2. **Dedupe and group.** If the same pattern shows up across multiple files (e.g. missing error handling on every new API call), merge it into one finding that lists all locations — don't repeat it per file. This is the cross-file judgment a single-file agent can't make.
+3. **Re-rank.** Apply severity tiers consistently across the whole PR; an agent may over- or under-rate in isolation.
+4. **Filter false positives.** Agents occasionally flag non-issues or miss surrounding context you have. Drop anything you're not confident is a real problem — one false positive undermines trust in the rest.
+5. **Tally** the total `Files read` across agents (for the footer) and collect the `Highlight` lines.
+
+The rubric, severity tiers, and "no false positives" bar apply to the aggregated set exactly as they would to an inline review.
 
 ### Step 4: Present findings in the terminal
 
@@ -309,7 +373,7 @@ Every review posted to GitHub must end with a footer so readers know it was AI-a
 ```
 
 - **duration**: The measured wall-clock time from the timing step above (e.g., "4m 30s", "6m 12s"). Always include this — it's measured, not estimated.
-- **files_reviewed**: Count of files you actually read with the Read tool (not just the total changed files from PR metadata).
+- **files_reviewed**: Count of files actually read — sum the `Files read` counts the review agents reported (plus any you read inline), not just the total changed files from PR metadata.
 - **tokens**: Total tokens used during the review. If you know the exact count (e.g., from subagent metadata), include it. If not available, omit the tokens field entirely rather than guessing — the footer should only contain facts.
 - **model**: The model ID powering the current session (from your system prompt, e.g., "claude-opus-4-6").
 

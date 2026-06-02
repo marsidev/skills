@@ -6,7 +6,7 @@ Opinionated [Agent Skills](https://skills.sh) for software development. Hand-wri
 
 | Skill | Description |
 |-------|-------------|
-| [review-pr](skills/review-pr) | PR code review with structured findings, severity tiers, and GitHub inline comments |
+| [review-pr](skills/review-pr) | PR code review with parallel per-file agents, structured findings, severity tiers, and GitHub inline comments |
 | [vue](skills/vue) | Vue 3 Composition API conventions, script setup macros, reactivity, and component patterns |
 
 ## Installation
