@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: "Review a GitHub pull request like a senior engineer — analyze the diff for bugs, security issues, convention violations, and quality problems, then present findings in the terminal and optionally post them as a structured PR review with inline comments. Use this skill when the user asks to review a PR, check a pull request, look at PR changes, audit a PR, or says /review-pr. Also trigger when the user says things like 'review this', 'check the PR', 'look at my changes', 'any issues with this PR', or 'what do you think of this diff'."
+description: "Review a GitHub pull request like a senior engineer — analyze the diff for bugs, security issues, convention violations, and quality problems, then write the full review to a gitignored markdown file, show a condensed summary in the terminal, and optionally post it as a structured PR review with inline comments. Use this skill when the user asks to review a PR, check a pull request, look at PR changes, audit a PR, or says /review-pr. Also trigger when the user says things like 'review this', 'check the PR', 'look at my changes', 'any issues with this PR', or 'what do you think of this diff'."
 license: MIT
 metadata:
   author: marsidev
@@ -9,7 +9,7 @@ metadata:
 
 # PR Code Review
 
-You are a senior code reviewer. Your job is to review a pull request diff, find real issues worth raising, and present them clearly — first in the terminal for the author to see, then optionally as a GitHub PR review with inline comments.
+You are a senior code reviewer. Your job is to review a pull request diff, find real issues worth raising, and present them clearly: write the full review to a gitignored file, print a condensed summary plus a findings table to the terminal, then optionally post it as a GitHub PR review with inline comments.
 
 ## Workflow
 
@@ -24,6 +24,24 @@ gh pr view --json number,title,url --jq '{number, title, url}'
 ```
 
 If a PR is found, confirm with the user: "Found PR #X: 'title'. Review this one?" If no PR exists for the current branch, ask the user for a PR number.
+
+**Arguments.** Everything after the command name is free-form text, not a flag parser. The PR
+number is the only thing this skill requires; anything else you write is a directive for this
+run and overrides the defaults in this file. Recognize at least:
+
+| Invocation | Effect |
+| --- | --- |
+| `/review-pr 1000` | Review PR #1000 with the defaults below |
+| `/review-pr 1000 use opus 5` | Dispatch review agents on `model: "opus"` instead of the default `sonnet` |
+| `/review-pr 1000 use fable` | Same, with `model: "fable"` |
+| `/review-pr 1000 in english` | Write the review in English |
+| `/review-pr 1000 only services/conversational-ai` | Restrict the review to files under that path |
+| `/review-pr 1000 no post` | Terminal output only; skip the GitHub review step |
+| `/review-pr 1000 deep` | Raise the fan-out cap and use the session model; for a release or a risky refactor |
+
+Valid model aliases are `sonnet`, `opus`, `haiku`, `fable`. Map loose phrasing onto them
+("opus 5" -> `opus`). If a directive conflicts with a default in this file, the directive wins.
+If it is ambiguous, ask before starting rather than guessing - a wrong guess costs a whole review.
 
 ### Step 2: Gather context
 
@@ -59,6 +77,16 @@ Each changed file is an independent review domain — reviewing one file doesn't
 
 - Send all agent calls **in a single message** so they run concurrently. One agent per independent file/group.
 - Use a **general-purpose** agent (subagent type that can Read and reason over full files — not a read-only excerpt searcher). The agents only read and report; they never edit.
+- **Pin the model**: unless the invocation overrides it (see Arguments in Step 1), pass
+  `model: "sonnet"` on every Agent call. A review agent reads one
+  diff plus one file and reports findings against a rubric you already wrote out for it -
+  a narrow, fully-specified task. Left unpinned, agents inherit the session model (Opus or
+  Fable); measured against plan limits, review-pr subagents have accounted for ~14% of a
+  week's usage that way. Escalate a single agent to the session model only when that file is
+  genuinely subtle: concurrency, protocol state machines, or security-sensitive parsing.
+- **Cap the fan-out**: at most ~8 agents per review, unless the invocation says otherwise. Beyond that you are paying for
+  redundant re-reads of shared context more than for coverage. Group the tail of small
+  files into one agent rather than giving each its own.
 - Each agent is **self-contained** — it does NOT inherit your session context. Give it everything it needs: the PR title and intent, the file path(s) it owns, that file's diff hunks (from Step 2), the relevant project conventions you gathered, and the full rubric below. A vague prompt produces a vague review.
 
 Use this prompt template per agent:
@@ -144,16 +172,54 @@ When the agents return, you own the synthesis — don't just concatenate their o
 
 The rubric, severity tiers, and "no false positives" bar apply to the aggregated set exactly as they would to an inline review.
 
-### Step 4: Present findings in the terminal
+### Step 4: Write the review to a file
 
-Print findings organized by severity. Use this format:
+Assemble the full review as markdown and write it to disk **before printing anything**. The
+full text must never go to the terminal: it is long, and everything you print is re-sent on
+every later turn of this session. The file is the artifact; the terminal gets a summary.
+
+**Path.** Never write the review where git would report it as an untracked file, and never
+assume a particular directory exists. Probe for a writable, git-ignored location in one call:
+
+```bash
+REVIEW_DIR=""
+if ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
+  for d in .local .tmp .scratch tmp .cache; do
+    if git -C "$ROOT" check-ignore -q "$d" 2>/dev/null; then REVIEW_DIR="$ROOT/$d/reviews"; break; fi
+  done
+fi
+[ -n "$REVIEW_DIR" ] || REVIEW_DIR="${TMPDIR:-/tmp}/claude-pr-reviews"
+mkdir -p "$REVIEW_DIR" && echo "$REVIEW_DIR" && date +%Y%m%d-%H%M%S
+```
+
+This prefers a git-ignored directory inside the repo (so the review sits next to the code and
+survives), and falls back to the system temp directory when the repo ignores none of those
+names or when you are not in a git repo at all. Use whatever the command prints; do not
+hardcode `.local`. If the fallback is used, say so when you report the path, since temp
+directories are cleared periodically.
+
+Name the file:
 
 ```
-## PR Review — #{number}: {title}
+pr-{number}-{shortSha}-{YYYYMMDD-HHMMSS}.md
+```
+
+`{shortSha}` is the first 8 characters of the `headRefOid` you saved in Step 2, and the
+timestamp is the one the command above printed. The SHA ties the review to the exact commit
+reviewed, so a re-review after new commits lands in its own file; the timestamp separates
+repeated reviews of the same commit. Never overwrite an existing review file.
+
+**File contents.** The complete review, in this format:
+
+```markdown
+# PR Review - #{number}: {title}
+
+- **Commit:** `{headRefOid}`
+- **Branch:** `{headRefName}` -> `{baseRefName}`
+- **Reviewed:** {YYYY-MM-DD HH:MM}
+- **Files reviewed:** {n}
 
 {1-3 sentence summary of the PR and overall assessment}
-
-### Summary
 
 | Severity | Count |
 |----------|-------|
@@ -163,9 +229,10 @@ Print findings organized by severity. Use this format:
 
 ---
 
-### Blocking
+## Blocking
 
-**1. {Title}** `Bug` `Reliability`
+### 1. {Title} `Bug` `Reliability`
+
 **File:** `path/to/file.ts` L42-55
 
 {Explanation of the problem}
@@ -175,30 +242,73 @@ Print findings organized by severity. Use this format:
 
 ---
 
-### Should-Fix
+## Should-Fix
 
-**2. {Title}** `Convention` `Quality`
+### 2. {Title} `Convention` `Quality`
 ...
 
 ---
 
-### Nitpick
+## Nitpick
 
-**3. {Title}** `Quality`
+### 3. {Title} `Quality`
 ...
+
+---
+
+## Highlights
+
+- {2-4 bullets on what was done well}
 ```
 
-If there are no issues at a given severity level, omit that section entirely. If there are no issues at all, say so — "No issues found. The changes look good."
+Omit any severity section that has no findings. If there are no findings at all, still write
+the file, with "No issues found. The changes look good." in place of the findings sections.
+Keep Highlights to 2-4 bullets; skip it if nothing stands out.
 
-After the findings, include a short **Highlights** section (2-4 bullet points max) acknowledging what was done well — good architectural decisions, solid test coverage, clean patterns, important bug fixes. Keep it brief; this isn't a performance review. Skip this section if nothing stands out.
+### Step 5: Show the condensed result and ask what to do
 
-After presenting, ask the user:
+Print **only** this to the terminal. One line per finding, title only, no explanations:
 
-> "Want me to post this as a PR review on GitHub? The summary will be the main review comment and each finding will be an inline comment on the relevant code."
+```
+## PR Review - #{number}: {title}
 
-Wait for the user's response. Do not post without explicit confirmation.
+{1-3 sentence summary and overall assessment}
 
-### Step 5: Post to GitHub (only if user confirms)
+| Severity | Count |
+|----------|-------|
+| Blocking | N |
+| Should-Fix | N |
+| Nitpick | N |
+
+| # | Severity | Finding | Location |
+|---|----------|---------|----------|
+| 1 | Blocking | {title} | `path/to/file.ts:42` |
+| 2 | Should-Fix | {title} | `path/to/other.ts:88` |
+| 3 | Nitpick | {title} | `path/to/third.ts:12` |
+
+Full review: {absolute path written in Step 4}
+```
+
+Do not reproduce the explanations or suggestions here - they are in the file. If a finding
+title needs context to be intelligible, fix the title, do not add a paragraph.
+
+Then ask:
+
+> **What next?**
+> **(a)** Post it to GitHub as a PR review - summary as the review comment, each finding inline
+> **(b)** Leave it as the file above
+>
+> Reply `a` or `b`.
+
+Wait for an explicit answer.
+
+- **(b)**: reply with the absolute path on one line and stop. Nothing else.
+- **(a)**: go to Step 6.
+
+Never post without explicit confirmation. If the invocation already said `no post`, skip the
+question entirely and behave as if the user chose (b).
+
+### Step 6: Post to GitHub (only if user confirms)
 
 Create a single PR review that contains:
 1. **The main review body** — the summary with the severity table
@@ -206,7 +316,7 @@ Create a single PR review that contains:
 
 **Building the review body:**
 
-The main body is a condensed version of the terminal output — the summary paragraph, the severity table, and a one-liner per finding (title + severity + category). The detailed explanations go in the inline comments.
+The main body is a condensed version of the review file written in Step 4 — the summary paragraph, the severity table, and a one-liner per finding (title + severity + category). The detailed explanations go in the inline comments.
 
 Format the main body like this:
 
@@ -354,7 +464,7 @@ Measure the wall-clock time of the review so it can be reported in the footer.
 date +%s > /tmp/review-start-time
 ```
 
-**At the end of Step 4** (after presenting findings in the terminal), record the end time and compute the duration:
+**At the end of Step 5** (after printing the condensed result), record the end time and compute the duration:
 
 ```bash
 START=$(cat /tmp/review-start-time) && END=$(date +%s) && ELAPSED=$((END - START)) && MINS=$((ELAPSED / 60)) && SECS=$((ELAPSED % 60)) && echo "${MINS}m ${SECS}s" && rm /tmp/review-start-time
@@ -379,6 +489,9 @@ Every review posted to GitHub must end with a footer so readers know it was AI-a
 
 ## Important guidelines
 
+- **Keep each agent's context small.** Give an agent only the files it owns. Its cost scales
+  with what you paste into its prompt plus what it reads, and every extra file it reads is
+  re-sent on each of its own turns.
 - **Be precise, not prolific.** A review with 3 real findings is worth more than one with 15 nitpicks. If you're unsure whether something is an issue, it probably isn't worth raising.
 - **Explain the "why".** Don't just say "this is wrong" — explain what could happen. "This will throw at runtime when `config` is undefined because the null check is on the wrong branch" is useful. "Consider adding a null check" is not.
 - **Respect the diff boundary.** Review what changed, not the entire codebase. If pre-existing code is bad but the PR doesn't touch it or make it worse, don't flag it.
