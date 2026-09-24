@@ -1,9 +1,10 @@
 ---
 name: trim-comments
-description: "Audit the comments and JSDoc that a change added or modified, cut the ones that are obvious or redundant, and shorten the ones that are too long - while keeping the comments that genuinely earn their length. Use when the user asks to trim, prune, clean up, reduce, or review comments/JSDoc/docblocks on a diff, branch, PR, or file, or says /trim-comments. Also trigger on phrasings like 'are these comments too obvious?', 'this JSDoc is too verbose', 'remove the AI-slop comments', 'did you add unnecessary comments', 'los comentarios son demasiado obvios', 'reduce los comentarios', 'limpia el JSDoc'."
+description: "Audit the comments and JSDoc that a change added or modified, cut the ones that are obvious or redundant, and shorten the ones that are too long - while keeping the comments that genuinely earn their length. Use when the user asks, in any language, to trim, prune, clean up, reduce, or review comments/JSDoc/docblocks on a diff, branch, PR, or file; asks whether comments a change added are obvious, redundant, or too verbose; or says /trim-comments."
 license: MIT
 metadata:
   author: marsidev
+  version: "2026.09.24"
 ---
 
 # Trim Comments
