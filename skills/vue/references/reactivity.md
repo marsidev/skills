@@ -1,9 +1,9 @@
 ---
 name: reactivity
-description: Vue 3 reactivity system, watchers, lifecycle hooks, effect scope, and composable patterns
+description: shallowRef vs ref, and composable conventions
 ---
 
-# Reactivity, Lifecycle & Composables
+# Reactivity & Composables
 
 ## ref vs shallowRef
 
@@ -21,141 +21,6 @@ data.value = { items: ['new'] } // triggers reactivity
 ```
 
 **Prefer `shallowRef`** for large data structures, external library instances, or when deep reactivity is unnecessary.
-
-## computed
-
-```ts
-// Read-only
-const doubled = computed(() => count.value * 2)
-
-// Writable
-const plusOne = computed({
-  get: () => count.value + 1,
-  set: (val) => { count.value = val - 1 }
-})
-```
-
-## reactive & readonly
-
-```ts
-const state = reactive({ count: 0, nested: { value: 1 } })
-const readonlyState = readonly(state)
-```
-
-`reactive()` loses reactivity on destructuring. Use `ref()` or `toRefs()` instead.
-
-## Watchers
-
-### watch
-
-```ts
-// Single ref
-watch(count, (newVal, oldVal) => {
-  console.log(`Changed: ${oldVal} → ${newVal}`)
-})
-
-// Getter (for props or computed expressions)
-watch(
-  () => props.id,
-  (id) => fetchData(id),
-  { immediate: true }
-)
-
-// Multiple sources
-watch([firstName, lastName], ([first, last]) => {
-  fullName.value = `${first} ${last}`
-})
-
-// Depth limit (Vue 3.5+)
-watch(state, callback, { deep: 2 })
-
-// Fire once (Vue 3.4+)
-watch(source, callback, { once: true })
-```
-
-### watchEffect
-
-Runs immediately, auto-tracks dependencies:
-
-```ts
-watchEffect(async () => {
-  const controller = new AbortController()
-
-  // Cleanup on re-run or unmount (Vue 3.5+)
-  onWatcherCleanup(() => controller.abort())
-
-  const res = await fetch(`/api/${id.value}`, { signal: controller.signal })
-  data.value = await res.json()
-})
-```
-
-Pause/resume (Vue 3.5+):
-
-```ts
-const { pause, resume, stop } = watchEffect(() => {})
-```
-
-### Flush Timing
-
-```ts
-// 'pre' (default) — before component update
-// 'post' — after component update (access updated DOM)
-// 'sync' — immediate, use with caution
-
-watch(source, callback, { flush: 'post' })
-watchPostEffect(() => {}) // alias for flush: 'post'
-```
-
-## Lifecycle Hooks
-
-```ts
-import {
-  onMounted,
-  onUnmounted,
-  onBeforeMount,
-  onBeforeUnmount,
-  onUpdated,
-  onErrorCaptured,
-  onActivated,     // KeepAlive
-  onDeactivated,   // KeepAlive
-} from 'vue'
-
-onMounted(() => {
-  // DOM is ready
-})
-
-onUnmounted(() => {
-  // cleanup timers, listeners, subscriptions
-})
-
-// Error boundary
-onErrorCaptured((err, instance, info) => {
-  console.error(err)
-  return false // stop propagation
-})
-```
-
-## Effect Scope
-
-Group reactive effects for batch disposal:
-
-```ts
-import { effectScope, onScopeDispose } from 'vue'
-
-const scope = effectScope()
-
-scope.run(() => {
-  const count = ref(0)
-  const doubled = computed(() => count.value * 2)
-  watch(count, () => console.log(count.value))
-
-  onScopeDispose(() => {
-    console.log('scope disposed')
-  })
-})
-
-scope.stop() // disposes all effects
-```
 
 ## Composables
 
@@ -214,6 +79,5 @@ useFetch(() => `/api/users/${props.id}`)
 <!--
 Source references:
 - https://vuejs.org/api/reactivity-core.html
-- https://vuejs.org/api/composition-api-lifecycle.html
 - https://vuejs.org/guide/reusability/composables.html
 -->

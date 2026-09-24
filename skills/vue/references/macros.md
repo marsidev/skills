@@ -19,16 +19,7 @@ interface Props {
 const props = defineProps<Props>()
 ```
 
-With defaults (Vue 3.5+, destructured):
-
-```ts
-const { title, count = 0 } = defineProps<{
-  title: string
-  count?: number
-}>()
-```
-
-With defaults (Vue 3.4 and below):
+With defaults, use `withDefaults` (props destructure is not used here):
 
 ```ts
 const props = withDefaults(defineProps<{
@@ -100,7 +91,10 @@ Components are closed by default. Explicitly expose properties for template ref 
 
 ```ts
 const count = ref(0)
-const reset = () => { count.value = 0 }
+
+function reset() {
+  count.value = 0
+}
 
 defineExpose({ count, reset })
 ```

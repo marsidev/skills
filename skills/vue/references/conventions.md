@@ -62,8 +62,8 @@ onUnmounted(() => {
   // ...
 })
 
-// 13. Watchers (always add a comment explaining purpose)
-// Refetch data when filter changes
+// 13. Watchers (always add a comment explaining why the watcher exists)
+// Filtering happens server-side, so a computed can't derive the list
 watch(filter, () => {
   fetchData()
 })

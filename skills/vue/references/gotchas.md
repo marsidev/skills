@@ -77,18 +77,19 @@ const data = computed(() => transform(raw.value))
 watch(raw, () => fetch('/api/data'))
 ```
 
-### Computed returning objects triggers effects every time
+### Computed returning new objects fires watchers on every recompute
 
-Computed properties returning new objects/arrays create new references on each access, triggering unnecessary watchers:
+A computed is cached until a dependency changes, but a getter that builds a new array/object returns a new reference on each recompute, so watchers fire even when the contents are equal:
 
 ```ts
-// BAD — new array reference every time
 const filtered = computed(() => items.value.filter(i => i.active))
 
-// Acceptable for template rendering (Vue optimizes this)
-// But watch(filtered, ...) fires on every dependency change
-// even if the actual items haven't changed
+// Fine in templates. But this fires on every `items` change,
+// even when the active set is the same:
+watch(filtered, callback)
 ```
+
+For watchers, watch a stable derived value (e.g. the ids) or return the previous value from the getter when nothing changed (`computed(prev => ...)`, Vue 3.4+).
 
 ### Conditional dependencies
 
@@ -174,34 +175,30 @@ const result = useMyComposable(toRef(props, 'id'))
 
 ### Boolean prop casting
 
-Vue casts boolean props differently than you might expect:
+An absent `boolean` prop is `false`, not `undefined`:
 
 ```ts
 defineProps<{ disabled?: boolean }>()
 ```
 
 ```vue
-<MyComponent disabled />     <!-- true -->
-<MyComponent :disabled="true" /> <!-- true -->
-<MyComponent />              <!-- undefined, NOT false -->
+<MyComponent disabled />  <!-- true -->
+<MyComponent />           <!-- false -->
 ```
 
-If you need `false` as default, declare it explicitly in `withDefaults` or destructuring defaults.
+To tell "not passed" apart from `false`, set its default to `undefined` in `withDefaults`.
 
 ## TypeScript
 
 ### Template type casting
 
-Vue templates don't support TypeScript `as` syntax. Use computed or type guards:
+With `lang="ts"`, template expressions accept TypeScript, including `as`:
 
-```ts
-// BAD — won't work in template
-// {{ (item as User).name }}
-
-// GOOD — computed
-const typedItem = computed(() => item.value as User)
-// {{ typedItem.name }}
+```vue
+<span>{{ (item as User).name }}</span>
 ```
+
+When the same cast repeats, narrow once in a typed `computed` instead.
 
 ### shallowRef for dynamic component storage
 

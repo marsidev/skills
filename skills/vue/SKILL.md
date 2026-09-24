@@ -4,7 +4,7 @@ description: Vue 3 Composition API conventions, script setup macros, reactivity 
 license: MIT
 metadata:
   author: marsidev
-  version: "2026.02.19"
+  version: "2026.09.24"
 ---
 
 # Vue 3 Development
@@ -65,7 +65,7 @@ Load only the file relevant to your current task:
 | Topic | Description | Reference |
 |-------|-------------|-----------|
 | Script Setup Macros | defineProps, defineEmits, defineModel, defineExpose, defineOptions, defineSlots, generics | [macros](references/macros.md) |
-| Reactivity & Lifecycle | ref, shallowRef, computed, watch, watchEffect, composable patterns, effect scope | [reactivity](references/reactivity.md) |
+| Reactivity & Composables | ref vs shallowRef, composable conventions | [reactivity](references/reactivity.md) |
 
 ### Patterns
 
@@ -85,5 +85,3 @@ Load only the file relevant to your current task:
 - Writing a composable → [reactivity](references/reactivity.md)
 - Implementing parent-child communication → [patterns](references/patterns.md)
 - Something isn't working as expected → [gotchas](references/gotchas.md)
-
-**Do not load all references at once.**
