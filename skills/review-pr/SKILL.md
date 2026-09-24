@@ -1,10 +1,10 @@
 ---
 name: review-pr
-description: "Review a GitHub pull request like a senior engineer — analyze the diff for bugs, security issues, convention violations, and quality problems, then write the full review to a gitignored markdown file, show a condensed summary in the terminal, and optionally post it as a structured PR review with inline comments. Use this skill when the user asks to review a PR, check a pull request, look at PR changes, audit a PR, or says /review-pr. Also trigger when the user says things like 'review this', 'check the PR', 'look at my changes', 'any issues with this PR', or 'what do you think of this diff'."
+description: "Review a GitHub pull request like a senior engineer — analyze the diff for bugs, security issues, convention violations, and quality problems, then write the full review to a gitignored markdown file, show a condensed summary in the terminal, and optionally post it as a structured PR review with inline comments. Use when the user asks for a review of, or an opinion on, a pull request (by number, URL, or the current branch's open PR), or says /review-pr."
 license: MIT
 metadata:
   author: marsidev
-  version: "2026.06.02"
+  version: "2026.09.24"
 ---
 
 # PR Code Review
@@ -37,6 +37,7 @@ run and overrides the defaults in this file. Recognize at least:
 | `/review-pr 1000 in english` | Write the review in English |
 | `/review-pr 1000 only services/conversational-ai` | Restrict the review to files under that path |
 | `/review-pr 1000 no post` | Terminal output only; skip the GitHub review step |
+| `/review-pr 1000 inline` | Post every finding inline, not only Blocking ones; for PRs read mostly by humans |
 | `/review-pr 1000 deep` | Raise the fan-out cap and use the session model; for a release or a risky refactor |
 
 Valid model aliases are `sonnet`, `opus`, `haiku`, `fable`. Map loose phrasing onto them
@@ -55,8 +56,9 @@ gh pr view {number} --json title,body,baseRefName,headRefName,headRefOid,changed
 gh pr diff {number}
 ```
 
-Save `headRefOid` (the head commit SHA) — you'll use it to build file URLs in the review body:
-`https://github.com/{owner}/{repo}/blob/{headRefOid}/{file_path}`
+Save `headRefOid` (the head commit SHA) and `{owner}/{repo}` (`gh repo view --json nameWithOwner --jq .nameWithOwner`).
+Every finding in the review links to its lines at that commit:
+`https://github.com/{owner}/{repo}/blob/{headRefOid}/{file_path}#L{start}-L{end}`
 
 Reading full files (not just the diff hunks) is essential — a change that looks fine in isolation may be wrong when you see the surrounding code. That reading happens during analysis (Step 3): inline for small PRs, or delegated to parallel per-file agents for larger ones. Either way, focus on files with substantive changes; skip trivial renames or lockfile updates.
 
@@ -120,7 +122,7 @@ You are a senior code reviewer. Review the changes to `{file_path}` in this PR a
 **Category:** {one or more of the category tags}
 **File:** `{file_path}` L{start}-{end}   (line numbers on the NEW/right side of the diff)
 **Problem:** {what's wrong and why it matters}
-**Suggestion:** {concrete fix, with a code snippet if helpful}
+**Fix:** {concrete fix, with a code snippet if helpful}
 ---
 
 End with: `Files read: N` and a one-line `Highlight:` of anything notably well done (or "none").
@@ -157,7 +159,7 @@ End with: `Files read: N` and a one-line `Highlight:` of anything notably well d
 Each finding needs:
 - A short, specific title
 - The file path and line number(s)
-- A clear explanation of the problem (what's wrong and why it matters)
+- A clear explanation of what goes wrong and when: "This will throw at runtime when `config` is undefined because the null check is on the wrong branch" is useful; "Consider adding a null check" is not
 - A concrete suggestion (what to do instead, with code if helpful)
 
 **Aggregating agent results:**
@@ -209,7 +211,8 @@ timestamp is the one the command above printed. The SHA ties the review to the e
 reviewed, so a re-review after new commits lands in its own file; the timestamp separates
 repeated reviews of the same commit. Never overwrite an existing review file.
 
-**File contents.** The complete review, in this format:
+**File contents.** The complete review, in this format. Step 6 posts this same text as the
+GitHub review body, so it has to stand on its own:
 
 ```markdown
 # PR Review - #{number}: {title}
@@ -219,51 +222,43 @@ repeated reviews of the same commit. Never overwrite an existing review file.
 - **Reviewed:** {YYYY-MM-DD HH:MM}
 - **Files reviewed:** {n}
 
+## {n} blocking, {n} should-fix, {n} nitpicks
+
 {1-3 sentence summary of the PR and overall assessment}
 
-| Severity | Count |
-|----------|-------|
-| Blocking | N |
-| Should-Fix | N |
-| Nitpick | N |
+### Blocking
 
----
+#### B1. {Title} `Bug` `Reliability`
 
-## Blocking
+[`path/to/file.ts:42-55`](https://github.com/{owner}/{repo}/blob/{headRefOid}/path/to/file.ts#L42-L55)
 
-### 1. {Title} `Bug` `Reliability`
+{What goes wrong and when}
 
-**File:** `path/to/file.ts` L42-55
+**Fix:** {What to do instead, with a code block if helpful}
 
-{Explanation of the problem}
+### Should-Fix
 
-**Suggestion:**
-{What to do instead, with code snippet if helpful}
-
----
-
-## Should-Fix
-
-### 2. {Title} `Convention` `Quality`
+#### S1. {Title} `Convention` `Quality`
 ...
 
----
+<details><summary>Nitpicks ({n})</summary>
 
-## Nitpick
-
-### 3. {Title} `Quality`
+#### N1. {Title} `Quality`
 ...
 
----
+</details>
 
-## Highlights
+### Highlights
 
 - {2-4 bullets on what was done well}
 ```
 
-Omit any severity section that has no findings. If there are no findings at all, still write
-the file, with "No issues found. The changes look good." in place of the findings sections.
-Keep Highlights to 2-4 bullets; skip it if nothing stands out.
+- Number findings per tier (`B1`, `S1`, `N1`). The terminal table and GitHub use the same IDs,
+  so whoever fixes the PR can answer with "fixed B1, S2; declined N1 because ...".
+- Nitpicks always go inside `<details>`, so a long tail doesn't bury the findings that matter.
+- Omit any tier with no findings. If there are none at all, still write the file, with
+  `## No issues found` as the heading and no tier sections.
+- Keep Highlights to 2-4 bullets; skip it if nothing stands out.
 
 ### Step 5: Show the condensed result and ask what to do
 
@@ -282,9 +277,9 @@ Print **only** this to the terminal. One line per finding, title only, no explan
 
 | # | Severity | Finding | Location |
 |---|----------|---------|----------|
-| 1 | Blocking | {title} | `path/to/file.ts:42` |
-| 2 | Should-Fix | {title} | `path/to/other.ts:88` |
-| 3 | Nitpick | {title} | `path/to/third.ts:12` |
+| B1 | Blocking | {title} | `path/to/file.ts:42` |
+| S1 | Should-Fix | {title} | `path/to/other.ts:88` |
+| N1 | Nitpick | {title} | `path/to/third.ts:12` |
 
 Full review: {absolute path written in Step 4}
 ```
@@ -295,7 +290,7 @@ title needs context to be intelligible, fix the title, do not add a paragraph.
 Then ask:
 
 > **What next?**
-> **(a)** Post it to GitHub as a PR review - summary as the review comment, each finding inline
+> **(a)** Post it to GitHub as a PR review - the full review as the body, Blocking findings also inline
 > **(b)** Leave it as the file above
 >
 > Reply `a` or `b`.
@@ -310,65 +305,27 @@ question entirely and behave as if the user chose (b).
 
 ### Step 6: Post to GitHub (only if user confirms)
 
-Create a single PR review that contains:
-1. **The main review body** — the summary with the severity table
-2. **Inline comments** — one per finding, attached to the specific file and line
+Post one PR review whose body is the complete review. Most readers of these reviews are
+agents, and `gh pr view --comments` shows review bodies but not inline comments, so nothing
+may live only in an inline comment. Inline comments are pointers for humans reading the
+"Files changed" tab.
 
-**Building the review body:**
+**Review body:** the Step 4 file without its `# PR Review` title line, followed by the footer
+from "Signature and stats" below.
 
-The main body is a condensed version of the review file written in Step 4 — the summary paragraph, the severity table, and a one-liner per finding (title + severity + category). The detailed explanations go in the inline comments.
-
-Format the main body like this:
-
-```markdown
-## Code Review
-
-{1-3 sentence summary}
-
-### Summary
-
-| Severity | Count |
-|----------|-------|
-| Blocking | N |
-| Should-Fix | N |
-| Nitpick | N |
-
-### Findings
-
-**Blocking**
-- {Title} `Bug` `Reliability` — [{filename}](https://github.com/{owner}/{repo}/blob/{headRefOid}/{file_path})
-
-**Should-Fix**
-- {Title} `Convention` — [{filename}](https://github.com/{owner}/{repo}/blob/{headRefOid}/{file_path})
-
-**Nitpick**
-- {Title} `Quality` — [{filename}](https://github.com/{owner}/{repo}/blob/{headRefOid}/{file_path})
-
-### Highlights
-- {Brief positive observation}
-- {Another one if warranted}
-```
-
-**Building inline comments:**
-
-Each finding becomes an inline comment. Format each comment body:
+**Inline comments:** one per Blocking finding, or one per finding if the invocation said
+`inline`. The body already carries the explanation, so keep the comment short:
 
 ```markdown
-**{Severity}** `{Category}`
-
-### {Title}
-
-{Explanation}
-
-**Suggestion:**
-{Explanation of what to change}
+**B1. {Title}** - {one sentence on what goes wrong}. Details in the review body.
 ```
+
+A finding on lines outside the diff gets no inline comment: GitHub rejects the whole review if
+any inline comment falls outside the diff. With no qualifying findings, post the body alone.
 
 **Using GitHub Suggested Changes:**
 
-When a finding has a concrete, self-contained code fix (not a vague "consider doing X"), use GitHub's suggested change syntax instead of a plain code block. This renders as a committable diff that the author can accept with one click — much more actionable.
-
-Inside the inline comment body, replace the code block in the suggestion with:
+When an inline finding has a concrete, self-contained code fix (not a vague "consider doing X"), append GitHub's suggested change syntax to its comment. This renders as a committable diff that the author can accept with one click:
 
 ````markdown
 ```suggestion
@@ -396,60 +353,23 @@ To get the correct line numbers:
 2. Find the line(s) your comment refers to in the `+` side of the diff
 3. Use those line numbers
 
-If a finding refers to code that isn't in the diff (e.g., existing code that interacts badly with the new change), make it a general comment in the review body instead of an inline comment — GitHub won't accept inline comments on lines outside the diff.
-
-**Posting the review:**
+**Posting the review:** write the payload to a temp file and post it with `--input`. Build the
+JSON programmatically (e.g. with `jq`) so the markdown bodies are escaped correctly; omit
+`comments` when there are no inline comments. This is its shape:
 
 ```bash
-gh api repos/{owner}/{repo}/pulls/{number}/reviews \
-  -X POST \
-  -f event="COMMENT" \
-  -f body="$(cat <<'REVIEW_BODY'
-{main review body here}
-REVIEW_BODY
-)" \
-  --input <(cat <<'JSON'
+PAYLOAD=$(mktemp)
+cat > "$PAYLOAD" <<'JSON'
 {
   "event": "COMMENT",
-  "body": "the review body",
+  "body": "{review body}",
   "comments": [
-    {
-      "path": "src/file.ts",
-      "line": 42,
-      "side": "RIGHT",
-      "body": "the inline comment body"
-    },
-    {
-      "path": "src/other.ts",
-      "start_line": 10,
-      "line": 15,
-      "side": "RIGHT",
-      "body": "multi-line comment body"
-    }
+    { "path": "src/file.ts", "line": 42, "side": "RIGHT", "body": "{inline comment body}" },
+    { "path": "src/other.ts", "start_line": 10, "line": 15, "side": "RIGHT", "body": "{multi-line comment body}" }
   ]
 }
 JSON
-)
-```
-
-In practice, build the JSON payload programmatically. Write it to a temp file and use `--input`:
-
-```bash
-# Write the review payload to a temp file
-cat > /tmp/review-payload.json <<'EOF'
-{...the JSON...}
-EOF
-
-# Post it
-gh api repos/{owner}/{repo}/pulls/{number}/reviews --input /tmp/review-payload.json
-
-# Clean up
-rm /tmp/review-payload.json
-```
-
-Get `{owner}/{repo}` from:
-```bash
-gh repo view --json nameWithOwner --jq '.nameWithOwner'
+gh api repos/{owner}/{repo}/pulls/{number}/reviews --input "$PAYLOAD" && rm "$PAYLOAD"
 ```
 
 After posting, confirm to the user with the review URL.
@@ -474,7 +394,7 @@ Use this duration string in the footer. This is the actual measured time, not an
 
 ### Signature and stats
 
-Every review posted to GitHub must end with a footer so readers know it was AI-assisted and can see the review effort. Append this to the **main review body** (not the inline comments):
+Every review posted to GitHub must end with a footer so readers know it was AI-assisted and can see the review effort. Append this to the **review body** (not the inline comments):
 
 ```markdown
 
@@ -485,7 +405,7 @@ Every review posted to GitHub must end with a footer so readers know it was AI-a
 - **duration**: The measured wall-clock time from the timing step above (e.g., "4m 30s", "6m 12s"). Always include this — it's measured, not estimated.
 - **files_reviewed**: Count of files actually read — sum the `Files read` counts the review agents reported (plus any you read inline), not just the total changed files from PR metadata.
 - **tokens**: Total tokens used during the review. If you know the exact count (e.g., from subagent metadata), include it. If not available, omit the tokens field entirely rather than guessing — the footer should only contain facts.
-- **model**: The model ID powering the current session (from your system prompt, e.g., "claude-opus-4-6").
+- **model**: The session's model ID, from your system prompt (e.g. `claude-opus-5-5`). If review agents ran on a different model, name both (e.g. `claude-opus-5-5 + sonnet agents`) - the footer should only contain facts.
 
 ## Important guidelines
 
@@ -493,9 +413,3 @@ Every review posted to GitHub must end with a footer so readers know it was AI-a
   with what you paste into its prompt plus what it reads, and every extra file it reads is
   re-sent on each of its own turns.
 - **Be precise, not prolific.** A review with 3 real findings is worth more than one with 15 nitpicks. If you're unsure whether something is an issue, it probably isn't worth raising.
-- **Explain the "why".** Don't just say "this is wrong" — explain what could happen. "This will throw at runtime when `config` is undefined because the null check is on the wrong branch" is useful. "Consider adding a null check" is not.
-- **Respect the diff boundary.** Review what changed, not the entire codebase. If pre-existing code is bad but the PR doesn't touch it or make it worse, don't flag it.
-- **Read surrounding code.** A one-line change can be a bug if you understand what the rest of the function does. Always read the full file for non-trivial changes.
-- **Convention violations are real issues** when backed by documented team rules (CLAUDE.md, AGENTS.md). "The team uses `satisfies` over `as`" is a valid finding if the convention is documented.
-- **Group related issues.** If the same pattern repeats across files (e.g., missing error handling on every new API call), raise it once with all locations listed, not once per occurrence.
-- **No false positives.** If you're not confident something is wrong, don't include it. One false positive undermines trust in all your other findings.
