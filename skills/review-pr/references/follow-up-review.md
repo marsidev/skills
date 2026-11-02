@@ -7,8 +7,9 @@ description: Re-review a PR you already reviewed - track the earlier findings, r
 
 Use when Step 2 finds an earlier review of yours at an older commit. It changes Steps 3-6 as
 described below; everything else in SKILL.md still applies. `{prevSha}` is the full 40-character
-SHA of your latest earlier review: its `commit_id`, or the `Commit:` line of a local review file.
-`git fetch` rejects the 8-character SHA in the file name.
+SHA of your latest earlier review: its `commit_id`, or, for a review kept only as a local file,
+the commit link in its header line (older files have a `Commit:` line instead). `git fetch`
+rejects the 8-character SHA in the file name.
 
 ## Earlier findings
 
@@ -17,13 +18,16 @@ without loading its full text:
 
 ```bash
 gh api "repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}" --jq .body \
-  | grep -E '^(#### [BSN][0-9]+\.|- [^ ]+ \*\*[BSN][0-9]+\.|\| [BSN][0-9]+ \||\[`)'
+  | grep -E '^(#### [BSN][0-9]+\.|- ([^ ]+ )?\*\*[BSN][0-9]+\.|\| [BSN][0-9]+ \||\[`)'
 ```
 
-If that review was itself a follow-up, its `### Earlier findings` table carries everything
-older. Otherwise read the earlier reviews too, newest first, back to the last full one. Reviews
+For a review posted as a PR comment (one with visuals), take the body from
+`gh api "repos/{owner}/{repo}/issues/comments/{id}" --jq .body` instead.
+
+If that review was itself a follow-up, its earlier-findings list carries everything older.
+Otherwise read the earlier reviews too, newest first, back to the last full one. Reviews
 written by hand, or before finding IDs existed, have no IDs; their inline comments are the
-findings.
+findings. Refer to them as `{date} item {n}`, never `#{n}`, which GitHub links to an issue.
 
 Then the discussion: your inline threads with every reply, the first line of other reviewers'
 threads, and human comments since your last review (where the author answers "fixed B1;
@@ -86,28 +90,35 @@ can show hundreds of unrelated files.
   S9). An ID then means one finding for the life of the PR.
 
 **Step 4.** Same file naming. In the content:
-- Metadata gains `- **Follow-up to:** [{prevShortSha}]({earlier review URL})`.
-- The heading becomes `## {n} new blocking, {n} new should-fix, {n} new nitpicks; {k} still open`.
-- After the summary, before Scope, list every earlier finding by its short title. Don't repeat
-  their explanations; the earlier review has them. Open and declined findings stay visible;
-  fixed and obsolete ones are collapsed:
+- The header line counts new findings and links the earlier review:
 
   ```markdown
-  ### Earlier findings
+  **{n} new blocking · {n} new should-fix · {n} new nitpicks · {k} still open** · [`{shortSha}`]({commit URL}) · {YYYY-MM-DD HH:MM} · follow-up to [`{prevShortSha}`]({earlier review URL})
+  ```
 
-  - ❌ **S4.** {title}: still open. {anything new, one line}
+- The verdict says in a few words what happened to the earlier findings ("All five earlier
+  findings are fixed").
+- New Blocking and Should-Fix findings are visible as usual. After them, each earlier finding
+  that is still open gets one visible line; its explanation stays in the earlier review:
+
+  ```markdown
+  **Still open from earlier:** ❌ **S4.** {title}: {anything new, one line}
+  ```
+
+- Every earlier finding is listed in a collapsed block between the nitpicks and the scope. Its
+  summary leaves out statuses with no findings ("Earlier findings: 5 of 5 fixed" when all are):
+
+  ```markdown
+  <details><summary>Earlier findings: {f} fixed, {o} open, {d} declined, {x} obsolete</summary>
+
+  - ❌ **S4.** {title}
   - 💬 **S3.** {title}: declined, "{author's reason, one line}"
-
-  <details><summary>Fixed or obsolete ({n})</summary>
-
   - ✅ **B1.** {title}
   - ✅ **S2.** {title}: fixed in #{layer PR}
   - ⚪ **N2.** {title}: obsolete, the code is gone
 
   </details>
   ```
-
-- The tier sections hold new findings only.
 
 **Step 5.** Print `Earlier: {f} fixed, {o} open, {d} declined, {x} obsolete` above the `Scope:`
 line. The findings table lists new findings only.
@@ -123,7 +134,7 @@ line. The findings table lists new findings only.
     -f body='Still open at `{shortSha}`: {one sentence}. See the follow-up review.'
   ```
 
-- Don't reply to confirm fixes (the table does that), and don't resolve threads; leave that to
-  people.
+- Don't reply to confirm fixes (the earlier-findings list does that), and don't resolve threads;
+  leave that to people.
 - List the replies under option **(a)** in Step 5, so the user approves them together with the
   review.
