@@ -4,7 +4,7 @@ description: "Review a GitHub pull request like a senior engineer — analyze th
 license: MIT
 metadata:
   author: marsidev
-  version: "2026.10.07"
+  version: "2026.11.02"
 ---
 
 # PR Code Review
@@ -98,10 +98,13 @@ before, by hand or with this skill:
 ```bash
 ME=$(gh api user --jq .login) && echo "$ME"
 gh api "repos/{owner}/{repo}/pulls/{number}/reviews" --paginate --jq ".[] | select(.user.login == \"$ME\") | {id, html_url, commit_id, submitted_at}"
+# A review with visuals is posted as a PR comment; its commit comes from the header link
+gh api "repos/{owner}/{repo}/issues/{number}/comments" --paginate --jq ".[] | select(.user.login == \"$ME\" and (.body | contains(\"Review assisted by [Claude Code]\"))) | {id, html_url, created_at, commit_id: ([.body | capture(\"/commits/(?<sha>[0-9a-f]{40})\")] | first.sha)}"
 ```
 
-Also look for `pr-{number}-*.md` in the review directory (run the probe from Step 4); a review
-kept only as a file was never posted. Take the most recent of all of these:
+A review whose body is only `Review with visuals: {URL}` belongs to that comment; count them as
+one. Also look for `pr-{number}-*.md` in the review directory (run the probe from Step 4); a
+review kept only as a file was never posted. Take the most recent of all of these:
 
 - **None:** review the whole PR as below.
 - **At `headRefOid`:** nothing changed since. Say so, give the review's URL or path, and ask
@@ -172,8 +175,9 @@ You are a senior code reviewer. Review the changes to `{file_path}` in this PR a
 **Severity:** {Blocking | Should-Fix | Nitpick}
 **Category:** {one or more of the category tags}
 **File:** `{file_path}` L{start}-{end}   (line numbers on the NEW/right side of the diff)
-**Problem:** {what's wrong and why it matters}
-**Fix:** {concrete fix, with a code snippet if helpful}
+**Problem:** {what goes wrong and when, in 1-2 sentences}
+**Fix:** {one concrete fix, with code only when the code is the fix}
+**Evidence:** {optional: measurements, traces, prod numbers or the chain of events that proves it}
 ---
 
 End with: `Files read: N` and a one-line `Highlight:` of anything notably well done (or "none").
@@ -222,11 +226,12 @@ Each finding needs:
 - A clear explanation of what goes wrong and when: "This will throw at runtime when `config` is undefined because the null check is on the wrong branch" is useful; "Consider adding a null check" is not
 - A concrete fix (what to do instead, with code if helpful)
 
-Keep each finding short. State what goes wrong and when in 1-3 sentences. Use numbered steps
-only when the order of events is the bug, and keep them to 4 or fewer. Then give one
-recommended fix, with code only when the code is the fix. Leave out alternative fixes,
-"at minimum" fallbacks and side suggestions: raise a side issue as its own finding or drop it.
-A bigger PR earns more findings, not longer ones.
+Keep each finding short. State what goes wrong and when in 1-2 sentences, then give one
+recommended fix, with code only when the code is the fix. Anything a reader needs only to
+verify the finding goes under Evidence: measurements, traces, prod numbers, or the order of
+events when the order is the bug (4 steps or fewer). Leave out alternative fixes, "at minimum"
+fallbacks and side suggestions: raise a side issue as its own finding or drop it. A bigger PR
+earns more findings, not longer ones.
 
 **Aggregating agent results:**
 
@@ -236,7 +241,7 @@ When the agents return, you own the synthesis — don't just concatenate their o
 2. **Dedupe and group.** If the same pattern or the same root cause shows up in several findings or files (e.g. missing error handling on every new API call), merge it into one finding that lists all locations — don't repeat it per file. This is the cross-file judgment a single-file agent can't make.
 3. **Re-rank.** Apply severity tiers consistently across the whole PR; an agent may over- or under-rate in isolation.
 4. **Filter false positives.** Agents occasionally flag non-issues or miss surrounding context you have. Drop anything you're not confident is a real problem — one false positive undermines trust in the rest.
-5. **Tally** the total `Files read` across agents (for the footer) and collect the `Highlight` lines.
+5. **Tally** the total `Files read` across agents (for the footer). The `Highlight` lines feed the verdict, at most a few words of it.
 
 The rubric, severity tiers, and false-positive filter apply to the aggregated set exactly as they would to an inline review.
 
@@ -277,9 +282,33 @@ the agents return, or as part of the inline review for a small PR.
    machinery should exist before asking for more fixes to it.
 
 When the PR is over-built, raise one `PR-level` `Over-engineering` finding that lists the
-machinery it would remove, rather than one finding per file. Its Fix is the lean alternative in
-3-6 bullets: what it reuses, what it leaves out and why that is safe, and its rough size.
-Without a linked issue, still apply points 2, 3 and 5 against the PR's stated intent.
+machinery it would remove, rather than one finding per file. Its Fix names the lean alternative
+and its rough size in one sentence. Its Evidence lists what to remove and the lean version in
+3-6 bullets: what it reuses, what it leaves out and why that is safe. Without a linked issue,
+still apply points 2, 3 and 5 against the PR's stated intent.
+
+**Premise check (whole PR; you do this, when it applies):**
+
+A diff can be correct and still fix the wrong thing. This applies when the PR's effect depends on
+how real traffic or real config behaves: routing, branching on data, model behaviour,
+user-authored config. Ask whether the change would have helped one real case the PR names, such
+as an incident, a request or a record. You don't need to re-run the case: check whether the
+PR's own evidence shows it, or only tests built on a hand-made shape. Skip this for changes whose
+effect is visible in the code alone.
+
+Raise a `PR-level` `Scope` finding when the evidence doesn't reach a real case and one of these
+holds:
+- **A static analysis stands in for runtime behaviour:** a graph walk or reachability check
+  that ignores the conditions the runtime applies.
+- **Most incidents come from one source:** one template, tenant, config or tool. Fixing that
+  source may beat changing the platform.
+- **The success measure is a stand-in:** for example "the request reached handler X" instead
+  of "the user got the outcome they asked for".
+
+> Example: a PR blocked a tool for the flows a graph walk said could reach it, ignoring the
+> conditions on the routing steps. Every file-level check passed. In prod, one of the flows it
+> named routed elsewhere, and the incidents came from one config that already had a correct
+> path. The PR was closed in favour of fixing that config.
 
 ### Step 4: Write the review to a file
 
@@ -321,64 +350,70 @@ repeated reviews of the same commit. Never overwrite an existing review file.
 **File contents.** The complete review, in this format. Step 6 posts this same text as the
 GitHub review body, so it has to stand on its own:
 
-```markdown
+````markdown
 # PR Review - #{number}: {title}
 
-- **Commit:** `{headRefOid}`
-- **Branch:** `{headRefName}` -> `{baseRefName}`
-- **Reviewed:** {YYYY-MM-DD HH:MM}
-- **Files reviewed:** {n}
+**{n} blocking · {n} should-fix · {n} nitpicks** · [`{shortSha}`](https://github.com/{owner}/{repo}/pull/{number}/commits/{headRefOid}) · {YYYY-MM-DD HH:MM}
 
-## {n} blocking, {n} should-fix, {n} nitpicks
+{Verdict in 1-2 sentences: whether it can merge and what must change first. Don't re-describe the PR.}
 
-{1-3 sentence summary of the PR and overall assessment}
+#### B1. {Title}
 
-### Scope
+[`file.ts:42-55`](https://github.com/{owner}/{repo}/blob/{headRefOid}/path/to/file.ts#L42-L55)
 
-Issue #{issue}: {title} (or "No linked issue; compared against the PR description")
+{What goes wrong and when, in 1-2 sentences}
 
-- ✅ {deliverable}
-- 🟡 {deliverable}: differs, {how}
-- ❌ {deliverable}: missing
+**Fix:** {one recommended fix}
 
-**Beyond the ask:** {additions no deliverable needs, or "none"}
+<details><summary>Details</summary>
 
-### Blocking
+{The finding's Evidence}
 
-#### B1. {Title} `Bug` `Reliability`
+</details>
 
-[`path/to/file.ts:42-55`](https://github.com/{owner}/{repo}/blob/{headRefOid}/path/to/file.ts#L42-L55)
-
-{What goes wrong and when}
-
-**Fix:** {What to do instead, with a code block if helpful}
-
-### Should-Fix
-
-#### S1. {Title} `Convention` `Quality`
+#### S1. {Title}
 ...
 
 <details><summary>Nitpicks ({n})</summary>
 
-#### N1. {Title} `Quality`
-...
+- **N1. {Title}** · [`file.ts:12`](https://github.com/{owner}/{repo}/blob/{headRefOid}/path/to/file.ts#L12)
+  {One sentence, only if the title doesn't already say it.} **Fix:** {fix}
 
 </details>
 
-### Highlights
+<details><summary>Scope: {n} of {m} delivered{, how many differ or are missing}{, what goes beyond the ask}</summary>
 
-- {2-4 bullets on what was done well}
-```
+Issue #{issue}: {title} (or "No linked issue; compared against the PR description")
 
-- Number findings per tier (`B1`, `S1`, `N1`). The terminal table and GitHub use the same IDs,
-  so whoever fixes the PR can answer with "fixed B1, S2; declined N1 because ...".
-- Nitpicks always go inside `<details>`, so a long tail doesn't bury the findings that matter.
-- A `PR-level` finding has no file link; write `PR-level` in place of the location line.
-- Use lists, not tables, in this file. GitHub squeezes a wide table's short columns until IDs
-  and words break mid-character. The terminal tables in Step 5 are fine.
-- Omit any tier with no findings. If there are none at all, still write the file, with
-  `## No issues found` as the heading and no tier sections.
-- Keep Highlights to 2-4 bullets; skip it if nothing stands out.
+- ✅ {deliverable}
+- 🟡 {deliverable}: {how it differs}
+- ❌ {deliverable}: missing
+
+Beyond the ask: {additions no deliverable needs, or "none"}
+
+</details>
+````
+
+The post has to be short enough that a human reads it whole; agents read the collapsed parts too.
+
+- **Visible:** the header line, the verdict, and every Blocking and Should-Fix finding as title,
+  location link, 1-2 sentences and Fix. A `PR-level` finding has no location line.
+- **Collapsed:** a finding's Evidence (as `Details`, or a more specific summary such as "Why CI
+  doesn't catch it"; leave the block out when there is no evidence), the nitpicks, and the
+  scope. Each summary carries its count or verdict, so a reader can tell whether to open it.
+- **IDs:** number findings per tier (`B1`, `S1`, `N1`). The terminal table and GitHub use the
+  same IDs, so whoever fixes the PR can answer "fixed B1, S2; declined N1 because ...". The
+  IDs carry the tier, so there are no tier headings and no category tags in the post.
+- **Left out:** highlights and a summary of what the PR does. Praise worth giving fits in the
+  verdict in a few words.
+- **Lists, not tables.** GitHub squeezes a wide table's short columns until IDs and words break
+  mid-character. The terminal tables in Step 5 are fine.
+- **`#N` is a link.** GitHub links every `#N` to that issue or PR, so write it only for one.
+- **Visuals, rarely.** A finding about an order of events, measured numbers, or a PR-level scope
+  argument may get one image in its Details block, never in place of text. Read
+  [references/visuals.md](references/visuals.md) before drawing one.
+- Omit what is empty. With no findings, keep the header line, write "No issues found" as the
+  verdict, and keep the scope block.
 
 ### Step 5: Show the condensed result and ask what to do
 
@@ -415,7 +450,7 @@ title needs context to be intelligible, fix the title, do not add a paragraph.
 Then ask:
 
 > **What next?**
-> **(a)** Post it to GitHub as a PR review - the full review as the body, Blocking findings also inline
+> **(a)** Post it to GitHub as a PR review - the full review as the body, Blocking findings also inline (with visuals: the body as a PR comment, plus a review for the inline comments)
 > **(b)** Leave it as the file above
 >
 > Reply `a` or `b`.
@@ -429,6 +464,9 @@ Never post without explicit confirmation. If the invocation already said `no pos
 question entirely and behave as if the user chose (b).
 
 ### Step 6: Post to GitHub (only if user confirms)
+
+A review with visuals is posted as [references/visuals.md](references/visuals.md) describes,
+because the reviews API can't upload images; what follows still applies to its inline comments.
 
 Post one PR review whose body is the complete review. Most readers of these reviews are
 agents, and `gh pr view --comments` shows review bodies but not inline comments, so nothing
@@ -516,8 +554,7 @@ Every review posted to GitHub must end with a footer so readers know it was AI-a
 
 ```markdown
 
----
-*Review assisted by [Claude Code](https://claude.ai/code) | {model} | {duration} | {files_reviewed} files reviewed | {tokens} agent tokens*
+<sub>Review assisted by [Claude Code](https://claude.ai/code) · {model} · {duration} · {files_reviewed} files read · {tokens} agent tokens</sub>
 ```
 
 The footer holds only measured or counted values, in this order, with no `~`, no estimates and
@@ -541,3 +578,4 @@ no extra wording. When a value is missing, drop its field rather than guessing.
 | Reference | Load when |
 | --- | --- |
 | [follow-up-review](references/follow-up-review.md) | Step 2 finds your earlier review of this PR at an older commit: track earlier findings, review only the delta, post a short follow-up |
+| [visuals](references/visuals.md) | A finding about an order of events, measured numbers, or a PR-level scope argument would read better with an image: when, how to draw and check it, how to post it |
