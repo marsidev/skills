@@ -6,7 +6,12 @@ Opinionated [Agent Skills](https://skills.sh) for software development. Hand-wri
 
 | Skill | Description |
 |-------|-------------|
+| [code-review](skills/code-review) | Local diff review for confirmed bugs, security/reliability flaws, documented repo rule breaches, and spec drift — inline on small diffs, bounded subagents on larger ones |
+| [polish-changes](skills/polish-changes) | Fast pre-commit / pre-PR second look combining `reuse-check`, lean `simplify`, `code-review`, doc/monitoring gap check, and `trim-comments` against a staged baseline |
+| [reuse-check](skills/reuse-check) | Find existing codebase helpers that replace newly written utilities with verified identical or stronger behavior |
 | [review-pr](skills/review-pr) | PR code review with parallel per-file agents, scope and over-engineering checks against the linked issue, follow-up reviews, and short GitHub reviews with collapsible detail and optional visuals |
+| [simplify](skills/simplify) | Lean behavioral-preserving cleanup across Reuse, Quality/Clarity, and Efficiency without sacrificing readability for fewer lines |
+| [trim-comments](skills/trim-comments) | Audit diff-touched comments and JSDoc — cut obvious narration, shorten verbose blocks, and keep comments that earn their length |
 | [vue](skills/vue) | Vue 3 Composition API conventions, script setup macros, reactivity, and component patterns |
 
 ## Installation

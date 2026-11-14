@@ -4,7 +4,7 @@ description: "Audit the comments and JSDoc that a change added or modified, cut 
 license: MIT
 metadata:
   author: marsidev
-  version: "2026.09.24"
+  version: "2026.11.14"
 ---
 
 # Trim Comments
@@ -29,11 +29,12 @@ real information.
 
 Default scope is the change under discussion, not the whole repo.
 
-1. If the user named a path, branch, or PR, use that.
-2. Otherwise: if the working tree has changes (`git status --porcelain`), scope is
+1. **Caller brief wins.** When invoked from `polish-changes` (or with an explicit `git diff <base-ref>` scope), use that scope directly, never re-read files already in your session context, and skip the standalone `mktemp` snapshot and linter/typecheck steps when `polish-changes` verifies everything once at the end.
+2. If the user named a path, branch, or PR, use that.
+3. Otherwise: if the working tree has changes (`git status --porcelain`), scope is
    staged + unstaged. If it is clean, scope is the branch: `git diff $(git merge-base HEAD
    <default-branch>)...HEAD`.
-3. `--all` widens to every comment in the given files. Never widen on your own - unreviewed
+4. `--all` widens to every comment in the given files. Never widen on your own - unreviewed
    comments outside the diff are someone else's decision.
 
 Skip generated/vendored files (`dist/`, `build/`, `*.gen.*`, lockfiles, `node_modules/`) and
