@@ -4,7 +4,7 @@ description: "Review a GitHub pull request like a senior engineer — analyze th
 license: MIT
 metadata:
   author: marsidev
-  version: "2026.11.02"
+  version: "2026.11.14"
 ---
 
 # PR Code Review
@@ -32,8 +32,7 @@ run and overrides the defaults in this file. Recognize at least:
 | Invocation | Effect |
 | --- | --- |
 | `/review-pr 1000` | Review PR #1000 with the defaults below |
-| `/review-pr 1000 use opus 5` | Dispatch review agents on `model: "opus"` instead of the default `sonnet` |
-| `/review-pr 1000 use fable` | Same, with `model: "fable"` |
+| `/review-pr 1000 use <model>` | Dispatch review agents on `<model>` (e.g. `use flash`, `use sonnet`, `use gpt-5-mini`) instead of the default |
 | `/review-pr 1000 in spanish` | Write the review in that language instead of the default English |
 | `/review-pr 1000 only src/server` | Restrict the review to files under that path |
 | `/review-pr 1000 no post` | Terminal output only; skip the GitHub review step |
@@ -41,8 +40,7 @@ run and overrides the defaults in this file. Recognize at least:
 | `/review-pr 1000 inline` | Post every finding inline, not only Blocking ones; for PRs read mostly by humans |
 | `/review-pr 1000 deep` | Drop the fan-out cap (one agent per file or coupled group) and run agents on the session model; for a release or a risky refactor |
 
-Valid model aliases are `sonnet`, `opus`, `haiku`, `fable`. Map loose phrasing onto them
-("opus 5" -> `opus`). If a directive conflicts with a default in this file, the directive wins.
+Map loose model phrasing (`"gemini flash"`, `"sonnet"`, `"opus 5"`) onto a model ID or alias supported by the current harness/provider; never switch providers unless the user explicitly named another provider. If a directive conflicts with a default in this file, the directive wins.
 If it is ambiguous, ask before starting rather than guessing - a wrong guess costs a whole review.
 
 ### Step 2: Gather context
@@ -50,9 +48,6 @@ If it is ambiguous, ask before starting rather than guessing - a wrong guess cos
 Fetch the PR metadata and diff:
 
 ```bash
-# Start time for the footer (see Timing); keep the printed number
-date +%s
-
 # PR metadata (includes headRefOid for building file URLs)
 gh pr view {number} --json url,title,body,baseRefName,headRefName,headRefOid,changedFiles,additions,deletions,files,closingIssuesReferences
 
@@ -99,7 +94,7 @@ before, by hand or with this skill:
 ME=$(gh api user --jq .login) && echo "$ME"
 gh api "repos/{owner}/{repo}/pulls/{number}/reviews" --paginate --jq ".[] | select(.user.login == \"$ME\") | {id, html_url, commit_id, submitted_at}"
 # A review with visuals is posted as a PR comment; its commit comes from the header link
-gh api "repos/{owner}/{repo}/issues/{number}/comments" --paginate --jq ".[] | select(.user.login == \"$ME\" and (.body | contains(\"Review assisted by [Claude Code]\"))) | {id, html_url, created_at, commit_id: ([.body | capture(\"/commits/(?<sha>[0-9a-f]{40})\")] | first.sha)}"
+gh api "repos/{owner}/{repo}/issues/{number}/comments" --paginate --jq ".[] | select(.user.login == \"$ME\" and (.body | test(\"\\*\\*[0-9]+ (new )?blocking · .*/pull/[0-9]+/commits/[0-9a-f]{40}\"))) | {id, html_url, created_at, commit_id: ([.body | capture(\"/commits/(?<sha>[0-9a-f]{40})\")] | first.sha)}"
 ```
 
 A review whose body is only `Review with visuals: {URL}` belongs to that comment; count them as
@@ -129,16 +124,9 @@ Each changed file is an independent review domain — reviewing one file doesn't
 
 **Dispatching review agents:**
 
-- Send all agent calls **in a single message** so they run concurrently. One agent per independent file/group.
-- Use a **general-purpose** agent (subagent type that can Read and reason over full files — not a read-only excerpt searcher). The agents only read and report; they never edit.
-- **Pin the model**: unless the invocation overrides it (see Arguments in Step 1), pass
-  `model: "sonnet"` on every Agent call. A review agent reads one
-  diff plus one file and reports findings against a rubric you already wrote out for it -
-  a narrow, fully-specified task. Left unpinned, agents run on the session model (or a
-  configured default subagent model), usually a larger one than this needs; unpinned
-  review-pr subagents once accounted for ~14% of a week's plan usage. Escalate a single
-  agent to the session model only when that file is genuinely subtle: concurrency, protocol
-  state machines, or security-sensitive parsing.
+- Dispatch all review subagents concurrently using the current harness's delegation tool (`delegate_task` with `mode: "async"` and `role: "review"` in T3 Code; parallel subagent calls in standalone Antigravity, Claude Code, or Codex). One agent per independent file/group.
+- Use a subagent type that can read and reason over full files (not an excerpt-only searcher). The agents only read and report; they never edit.
+- **Right-size the model**: a review agent reads one diff plus one file against a rubric you already wrote out for it — a narrow, fully-specified task. Unless the invocation overrides it (see Arguments in Step 1), pin the current provider's lighter/mid-tier coding model when the harness supports same-provider model selection (e.g. `flash` in Antigravity, `sonnet` in Claude Code); otherwise inherit the session model rather than switching providers. Escalate an agent to the session model when its file is genuinely subtle: concurrency, protocol state machines, or security-sensitive parsing.
 - **Cap the fan-out**: at most ~8 agents per review, unless the invocation says otherwise. Beyond that you are paying for
   redundant re-reads of shared context more than for coverage. Group the tail of small
   files into one agent rather than giving each its own.
@@ -180,7 +168,7 @@ You are a senior code reviewer. Review the changes to `{file_path}` in this PR a
 **Evidence:** {optional: measurements, traces, prod numbers or the chain of events that proves it}
 ---
 
-End with: `Files read: N` and a one-line `Highlight:` of anything notably well done (or "none").
+End with a one-line `Highlight:` of anything notably well done (or "none").
 ````
 
 **The rubric** (this is what you paste into each agent prompt, and what you apply directly for inline review):
@@ -241,7 +229,7 @@ When the agents return, you own the synthesis — don't just concatenate their o
 2. **Dedupe and group.** If the same pattern or the same root cause shows up in several findings or files (e.g. missing error handling on every new API call), merge it into one finding that lists all locations — don't repeat it per file. This is the cross-file judgment a single-file agent can't make.
 3. **Re-rank.** Apply severity tiers consistently across the whole PR; an agent may over- or under-rate in isolation.
 4. **Filter false positives.** Agents occasionally flag non-issues or miss surrounding context you have. Drop anything you're not confident is a real problem — one false positive undermines trust in the rest.
-5. **Tally** the total `Files read` across agents (for the footer). The `Highlight` lines feed the verdict, at most a few words of it.
+5. **Note highlights.** The `Highlight` lines feed the verdict, at most a few words of it.
 
 The rubric, severity tiers, and false-positive filter apply to the aggregated set exactly as they would to an inline review.
 
@@ -326,7 +314,7 @@ if ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
     if git -C "$ROOT" check-ignore -q "$d" 2>/dev/null; then REVIEW_DIR="$ROOT/$d/reviews"; break; fi
   done
 fi
-[ -n "$REVIEW_DIR" ] || REVIEW_DIR="${TMPDIR:-/tmp}/claude-pr-reviews"
+[ -n "$REVIEW_DIR" ] || REVIEW_DIR="${TMPDIR:-/tmp}/pr-reviews"
 mkdir -p "$REVIEW_DIR" && echo "$REVIEW_DIR" && date +%Y%m%d-%H%M%S
 ```
 
@@ -473,8 +461,7 @@ agents, and `gh pr view --comments` shows review bodies but not inline comments,
 may live only in an inline comment. Inline comments are pointers for humans reading the
 "Files changed" tab.
 
-**Review body:** the Step 4 file without its `# PR Review` title line, followed by the footer
-from "Signature and stats" below.
+**Review body:** the Step 4 file without its `# PR Review` title line.
 
 **Inline comments:** one per Blocking finding, or one per finding if the invocation said
 `inline`. The body already carries the explanation, so keep the comment short:
@@ -534,36 +521,6 @@ gh api repos/{owner}/{repo}/pulls/{number}/reviews --input "$PAYLOAD" && rm "$PA
 ```
 
 After posting, confirm to the user with the review URL.
-
-### Timing
-
-Measure the wall-clock time of the review so it can be reported in the footer.
-
-Step 2 prints the start time (`date +%s`). At the end of Step 5, after printing the condensed
-result, compute the duration from it:
-
-```bash
-ELAPSED=$(( $(date +%s) - {start} )) && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s"
-```
-
-Use this duration string in the footer. This is the actual measured time, not an estimate.
-
-### Signature and stats
-
-Every review posted to GitHub must end with a footer so readers know it was AI-assisted and can see the review effort. Append this to the **review body** (not the inline comments):
-
-```markdown
-
-<sub>Review assisted by [Claude Code](https://claude.ai/code) · {model} · {duration} · {files_reviewed} files read · {tokens} agent tokens</sub>
-```
-
-The footer holds only measured or counted values, in this order, with no `~`, no estimates and
-no extra wording. When a value is missing, drop its field rather than guessing.
-
-- **model**: The session's model ID, from your system prompt (e.g. `claude-opus-5-5`). If review agents ran, append them as `+ sonnet agents`, `+ opus agents` or `+ opus and sonnet agents`.
-- **duration**: Measured from the start time printed in Step 2 (e.g. `4m 30s`). If that number is gone, drop the field.
-- **files_reviewed**: The exact sum of the `Files read` counts the agents reported, plus any files you read inline; not the PR's changed-file count.
-- **tokens**: The sum of the token totals the agents reported, rounded to thousands (e.g. `728k`). Leave it out if any agent's total is unknown.
 
 ## Important guidelines
 

@@ -80,7 +80,7 @@ review with a visual is therefore posted in two parts, from the review directory
      --attach './pr-{number}-{shortSha}-v1.png#{alt text}'
    ```
 
-   `{body file}` is the review file without its title line, plus the footer, as in Step 6.
+   `{body file}` is the review file without its title line, as in Step 6.
    The command prints the comment URL.
 2. **The inline comments as a review**, through the reviews API as in Step 6, with a one-line
    body: `Review with visuals: {comment URL}`. Skip this when there are no inline comments.
