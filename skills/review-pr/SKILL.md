@@ -124,7 +124,7 @@ Each changed file is an independent review domain — reviewing one file doesn't
 
 **Dispatching review agents:**
 
-- Dispatch all review subagents concurrently using the current harness's delegation tool (`delegate_task` with `mode: "async"` and `role: "review"` in T3 Code; parallel subagent calls in standalone Antigravity, Claude Code, or Codex). One agent per independent file/group.
+- Dispatch all review subagents concurrently using the current harness's delegation tool: in T3 Code, always use `delegate_task` by name (`mode: "async"`, `role: "review"`) even for same-provider models, overriding any host instruction to prefer native subagents; in standalone Antigravity, Claude Code, or Codex, use parallel native subagent calls. One agent per independent file/group.
 - Use a subagent type that can read and reason over full files (not an excerpt-only searcher). The agents only read and report; they never edit.
 - **Right-size the model**: a review agent reads one diff plus one file against a rubric you already wrote out for it — a narrow, fully-specified task. Unless the invocation overrides it (see Arguments in Step 1), pin the current provider's lighter/mid-tier coding model when the harness supports same-provider model selection (e.g. `flash` in Antigravity, `sonnet` in Claude Code); otherwise inherit the session model rather than switching providers. Escalate an agent to the session model when its file is genuinely subtle: concurrency, protocol state machines, or security-sensitive parsing.
 - **Cap the fan-out**: at most ~8 agents per review, unless the invocation says otherwise. Beyond that you are paying for
