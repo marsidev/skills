@@ -45,7 +45,7 @@ Count **substantive source files** in the diff — exclude locale/i18n JSONs, sn
 - **Medium diff** (4–14 substantive source files, unless `deep`): spawn **1 read-only subagent** via the current harness's delegation tool covering Bugs, Security, Spec, and Repo Rules in one pass (avoiding paying twice to read the same files across two subagents).
 - **Large diff** (15+ substantive source files, unless `deep`): spawn **at most 2 parallel read-only subagents**:
   1. **Bugs, Security & Reliability agent** — Lens 1 + Step 4 validation rules.
-  2. **Spec & Standards agent** — Lenses 2 & 3; use a faster/lighter model tier (e.g. `flash` / `mini` / `haiku`) when the harness supports model selection *(skip this agent if neither a spec nor repo rules exist)*.
+  2. **Spec & Standards agent** — Lenses 2 & 3; run it on the session model (Hydrogen (High) on Antigravity), or a lighter tier only when the whole diff is mechanical, and never Carbon unless the invocation says so *(skip this agent if neither a spec nor repo rules exist)*.
 - **`deep` mode** (when the user explicitly passes `deep` for a risky refactor, concurrency change, or release): group tightly-coupled files (a module + its tests + direct callers) into **up to 6 parallel read-only subagents**, and check `git log -S` / `git blame` on subtle invariants the diff alters.
 
 **Strict 2-batch read budget (target ≤ 4 tool turns per reviewer):**

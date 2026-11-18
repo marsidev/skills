@@ -32,7 +32,7 @@ run and overrides the defaults in this file. Recognize at least:
 | Invocation | Effect |
 | --- | --- |
 | `/review-pr 1000` | Review PR #1000 with the defaults below |
-| `/review-pr 1000 use <model>` | Dispatch review agents on `<model>` (e.g. `use flash`, `use sonnet`, `use gpt-5-mini`) instead of the default |
+| `/review-pr 1000 use <model>` | Dispatch review agents on `<model>` (e.g. `use carbon`, `use sonnet`, `use gpt-5-mini`) instead of the default |
 | `/review-pr 1000 in spanish` | Write the review in that language instead of the default English |
 | `/review-pr 1000 only src/server` | Restrict the review to files under that path |
 | `/review-pr 1000 no post` | Terminal output only; skip the GitHub review step |
@@ -126,7 +126,7 @@ Each changed file is an independent review domain — reviewing one file doesn't
 
 - Dispatch all review subagents concurrently using the current harness's delegation tool: in T3 Code, always use `delegate_task` by name (`mode: "async"`, `role: "review"`) even for same-provider models, overriding any host instruction to prefer native subagents; in standalone Antigravity, Claude Code, or Codex, use parallel native subagent calls. One agent per independent file/group.
 - Use a subagent type that can read and reason over full files (not an excerpt-only searcher). The agents only read and report; they never edit.
-- **Right-size the model**: a review agent reads one diff plus one file against a rubric you already wrote out for it — a narrow, fully-specified task. Unless the invocation overrides it (see Arguments in Step 1), pin the current provider's lighter/mid-tier coding model when the harness supports same-provider model selection (e.g. `flash` in Antigravity, `sonnet` in Claude Code); otherwise inherit the session model rather than switching providers. Escalate an agent to the session model when its file is genuinely subtle: concurrency, protocol state machines, or security-sensitive parsing.
+- **Right-size the model**: a review agent reads one diff plus one file against a rubric you already wrote out for it, which is a narrow, fully-specified task, so the session model is enough: on Antigravity that is Gemini 4 Hydrogen (High), pinned explicitly when the harness needs model selection. Use Hydrogen (Medium) only for a single mechanical file. Do not run review agents on a lighter `flash` tier, and never on Carbon unless the invocation asks for it: when a file is genuinely subtle (concurrency, protocol state machines, security-sensitive parsing), propose Carbon (Medium) in one line and let the user decide.
 - **Cap the fan-out**: at most ~8 agents per review, unless the invocation says otherwise. Beyond that you are paying for
   redundant re-reads of shared context more than for coverage. Group the tail of small
   files into one agent rather than giving each its own.
