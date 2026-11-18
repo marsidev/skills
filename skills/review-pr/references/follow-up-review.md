@@ -86,6 +86,9 @@ can show hundreds of unrelated files.
   file, with status}`. Drop any new finding that another reviewer's thread already covers.
 - Repeat the scope check only if the earlier review has no Scope section or the delta adds new
   machinery; otherwise carry its Scope section over unchanged.
+- Re-run the open-PR overlap check from SKILL.md: flag newly opened conflicting PRs, and mark
+  earlier `Coordination` findings `Fixed` or `Obsolete` once the sibling PR merges, closes, or
+  becomes this branch's base.
 - New IDs continue after the highest earlier ID in each tier (earlier S1-S8, so the next is
   S9). An ID then means one finding for the life of the PR.
 

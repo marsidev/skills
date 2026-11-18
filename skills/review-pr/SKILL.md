@@ -4,7 +4,7 @@ description: "Review a GitHub pull request like a senior engineer — analyze th
 license: MIT
 metadata:
   author: marsidev
-  version: "2026.11.14"
+  version: "2026.11.18"
 ---
 
 # PR Code Review
@@ -39,6 +39,7 @@ run and overrides the defaults in this file. Recognize at least:
 | `/review-pr 1000 full` | Ignore earlier reviews and review the whole PR again |
 | `/review-pr 1000 inline` | Post every finding inline, not only Blocking ones; for PRs read mostly by humans |
 | `/review-pr 1000 deep` | Drop the fan-out cap (one agent per file or coupled group) and run agents on the session model; for a release or a risky refactor |
+| `/review-pr 1000 no overlap` | Skip the open-PR overlap scan in Steps 2-3 |
 
 Map loose model phrasing (`"gemini flash"`, `"sonnet"`, `"opus 5"`) onto a model ID or alias supported by the current harness/provider; never switch providers unless the user explicitly named another provider. If a directive conflicts with a default in this file, the directive wins.
 If it is ambiguous, ask before starting rather than guessing - a wrong guess costs a whole review.
@@ -86,6 +87,21 @@ Write down the deliverables, explicit exclusions ("no X", "in a follow-up"), con
 ("measure first", "agree on scope before coding") and acceptance criteria. If the PR is one
 layer of a stack, judge scope against the whole stack, since the stack answers the issue. If
 there is no linked issue, use the PR description as the stated intent and say so in the review.
+
+**Open sibling PRs.** Unless the invocation says `no overlap`, scan open PRs in `{owner}/{repo}` to
+spot competing, conflicting, or combinable work in flight:
+
+```bash
+gh pr list --repo {owner}/{repo} --state open --limit 50 \
+  --json number,title,url,baseRefName,headRefName,closingIssuesReferences,body,files \
+  --jq '[.[] | {number, title, url, baseRefName, headRefName, issues: ([.closingIssuesReferences[].number] + [(.body // "") | scan("(?:^|[^A-Za-z0-9_/])#([0-9]+)") | .[0] | tonumber] | unique), files: [.files[].path]}]'
+```
+
+Skip the current PR and any PR directly stacked with it (`baseRefName == headRefName`,
+`headRefName == baseRefName`, or sharing a stack list in `body`). Keep only candidates that
+share a referenced issue, touch any of the same substantive code files (ignoring shared docs,
+changelogs, or lockfiles), or change the same subsystem with overlapping intent. Do not fetch
+their diffs yet; inspect only the 1-3 real candidates in Step 3.
 
 **Earlier reviews.** Unless the invocation says `full`, check whether you have reviewed this PR
 before, by hand or with this skill:
@@ -200,13 +216,16 @@ End with a one-line `Highlight:` of anything notably well done (or "none").
 | Should-Fix | `Should-Fix` | Strong recommendation. Reliability, quality, or convention issues that will cause problems. |
 | Nitpick | `Nitpick` | Minor improvements. Nice to have, fine to ignore. |
 
-**Category tags:** `Bug`, `Security`, `Convention`, `Reliability`, `Quality`, `Performance`, `Maintainability`, `Over-engineering`, `Scope`
+**Category tags:** `Bug`, `Security`, `Convention`, `Reliability`, `Quality`, `Performance`, `Maintainability`, `Over-engineering`, `Scope`, `Coordination`
 
 Over-engineering severity: `Blocking` when the extra machinery changes behavior outside the
 ask (e.g. a new hard failure on flows the issue didn't touch) or contradicts scope agreed in the
 issue; `Should-Fix` when it is in scope but much heavier than needed; `Nitpick` for small local
 cases such as a one-use helper. Use `Scope` for a deliverable that is missing or differs from
-the ask, and for unrelated changes that should be their own PR.
+the ask, and for unrelated changes that should be their own PR. Use `Coordination` for unstacked
+open PRs that collide with this one: `Blocking` when merging both unchanged breaks behavior,
+introduces conflicting contracts, or lands competing fixes for the same issue; `Should-Fix` when
+parallel additions should share an abstraction or require an explicit merge order.
 
 Each finding needs:
 - A short, specific title
@@ -297,6 +316,27 @@ holds:
 > conditions on the routing steps. Every file-level check passed. In prod, one of the flows it
 > named routed elsewhere, and the incidents came from one config that already had a correct
 > path. The PR was closed in favour of fixing that config.
+
+**Cross-PR overlap check (whole PR; you do this, when Step 2 finds candidates):**
+
+Inspect `gh pr diff {other}` for each candidate from Step 2 (do not pass sibling PRs to per-file
+agents). Look for four collision patterns:
+
+- **Competing implementations:** both PRs solve the same issue or bug independently, leaving
+  duplicate paths or silent overwrites if both merge.
+- **Conflicting decisions:** opposite choices on a shared boundary (error codes, config keys,
+  API/schema shapes, retry vs. fail-fast, flag semantics) where each passes CI alone but breaks
+  when combined.
+- **Combinable additions:** both PRs introduce parallel helpers, stores, endpoints, or handlers
+  in the same area that should share one interface or abstraction before both land.
+- **Uncoordinated merge order:** non-stacked PRs editing the same callers or shared state where
+  one must land first and the other must rebase or stack on top.
+
+Never guess from titles alone or flag intentional stack layers against each other. Every
+`Coordination` finding must cite `#other` and name the exact overlapping files, symbols, or
+contract from both diffs, with a concrete resolution (choose one, unify the shared piece, or
+set merge order). Raise it at `PR-level` (or on the shared file) and state the coordination
+constraint in the Step 4 verdict.
 
 ### Step 4: Write the review to a file
 
